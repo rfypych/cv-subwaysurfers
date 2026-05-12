@@ -1,151 +1,186 @@
+import sys
+import os
 import cv2
-import mediapipe as mp
-import pyautogui
 import time
+import threading
+import webbrowser
 import numpy as np
-import pygetwindow as gw
-from mss import mss
-from collections import deque
+import pyautogui
+from dotenv import load_dotenv
+from detectors import DETECTORS
 
-# --- MediaPipe Hands Setup ---
-try:
-    import mediapipe as mp
-    mp_hands = mp.solutions.hands
-    mp_draw = mp.solutions.drawing_utils
-except (AttributeError, ImportError):
-    from mediapipe.python.solutions import hands as mp_hands
-    from mediapipe.python.solutions import drawing_utils as mp_draw
+# --- Load Config ---
+load_dotenv()
 
-# Reduced confidence slightly for better detection in low light
-hands = mp_hands.Hands(
-    min_detection_confidence=0.5, 
-    min_tracking_confidence=0.5, 
-    max_num_hands=1
-)
+CONFIG = {
+    "control_mode": os.getenv("CONTROL_MODE", "finger").lower(),
+    "swipe_threshold": float(os.getenv("SWIPE_THRESHOLD", "0.12")),
+    "cooldown_time": float(os.getenv("COOLDOWN_TIME", "0.35")),
+    "buffer_size": int(os.getenv("BUFFER_SIZE", "5")),
+    "detection_confidence": float(os.getenv("DETECTION_CONFIDENCE", "0.5")),
+    "tracking_confidence": float(os.getenv("TRACKING_CONFIDENCE", "0.5")),
+    "game_url": os.getenv("GAME_URL", "https://poki.com/en/g/subway-surfers"),
+    "camera_index": int(os.getenv("CAMERA_INDEX", "0")),
+}
 
-# --- Configuration ---
-WIDTH = 1280
-HEIGHT = 720
-COOLDOWN_TIME = 0.35 # Slightly faster cooldown
-last_action_time = 0
+# ZERO pause for maximum input speed
+pyautogui.PAUSE = 0
 
-# Swipe Sensitivity (Lower = more sensitive)
-SWIPE_THRESHOLD = 0.12 # Threshold for total displacement in buffer
-
-# Buffer for smoothing and better gesture detection
-BUFFER_SIZE = 5
-pos_buffer = deque(maxlen=BUFFER_SIZE)
-
-# Auto-Restart
-AUTO_RESTART = True
-last_restart_check = 0
-
-def find_game_window():
-    windows = gw.getWindowsWithTitle('Subway Surfers')
-    if windows: return windows[0]
-    return None
-
-# --- Main Logic ---
-cap = cv2.VideoCapture(0)
-cap.set(cv2.CAP_PROP_FRAME_WIDTH, WIDTH)
-cap.set(cv2.CAP_PROP_FRAME_HEIGHT, HEIGHT)
-# Try to increase FPS
-cap.set(cv2.CAP_PROP_FPS, 60)
-
-sct = mss()
-
-print("Subway Surfers SWIPE Controller v2.0")
-print("Optimization: Position Buffering & Low-Confidence Support")
-print("Flick your finger quickly to trigger actions.")
-print("Press 'Q' to Quit.")
-
-while cap.isOpened():
-    success, frame = cap.read()
-    if not success: continue
-
-    frame = cv2.flip(frame, 1)
-    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    results = hands.process(frame_rgb)
-    
-    current_time = time.time()
-    
-    # 1. Game Preview Overlay
-    game_window = find_game_window()
-    if game_window and game_window.width > 100:
-        try:
-            monitor = {"top": game_window.top, "left": game_window.left, "width": game_window.width, "height": game_window.height}
-            game_screenshot = sct.grab(monitor)
-            game_img = np.array(game_screenshot)
-            game_img = cv2.cvtColor(game_img, cv2.COLOR_BGRA2BGR)
-            pip_w, pip_h = 300, int(300 * (game_window.height / game_window.width))
-            game_pip = cv2.resize(game_img, (pip_w, pip_h))
-            frame[10:10+pip_h, WIDTH-10-pip_w:WIDTH-10] = game_pip
-            cv2.rectangle(frame, (WIDTH-10-pip_w, 10), (WIDTH-10, 10+pip_h), (0, 255, 0), 2)
-        except: pass
-
-    # 2. Advanced Gesture Detection
-    if results.multi_hand_landmarks:
-        for hand_landmarks in results.multi_hand_landmarks:
-            mp_draw.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+class CameraStream:
+    def __init__(self, src=0):
+        # Use DirectShow on Windows for better external webcam compatibility
+        if os.name == 'nt':
+            self.stream = cv2.VideoCapture(src, cv2.CAP_DSHOW)
+        else:
+            self.stream = cv2.VideoCapture(src)
             
-            # Use Index Finger Tip (8)
-            curr_pos = hand_landmarks.landmark[mp_hands.HandLandmark.INDEX_FINGER_TIP]
-            pos_buffer.append((curr_pos.x, curr_pos.y))
-            
-            # Draw tracking dot & Path
-            ix, iy = int(curr_pos.x * WIDTH), int(curr_pos.y * HEIGHT)
-            cv2.circle(frame, (ix, iy), 8, (0, 255, 255), -1)
+        if not self.stream.isOpened():
+            print(f"ERROR: Could not open camera {src}. It might be used by another app or disconnected.")
+            self.stopped = True
+            self.grabbed = False
+            return
 
-            # Need at least a few frames to detect a swipe trend
-            if len(pos_buffer) == BUFFER_SIZE:
-                # Calculate displacement from first to last point in buffer
-                start_p = pos_buffer[0]
-                end_p = pos_buffer[-1]
-                
-                dx = end_p[0] - start_p[0]
-                dy = end_p[1] - start_p[1]
-                
-                # Check for Swipe
-                if current_time - last_action_time > COOLDOWN_TIME:
-                    action_triggered = False
-                    
-                    if abs(dx) > abs(dy) and abs(dx) > SWIPE_THRESHOLD:
-                        if dx < 0:
-                            pyautogui.press('left')
-                            cv2.putText(frame, "<< LEFT", (ix-120, iy), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (255, 255, 0), 3)
-                        else:
-                            pyautogui.press('right')
-                            cv2.putText(frame, "RIGHT >>", (ix+40, iy), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (255, 0, 255), 3)
-                        action_triggered = True
-                    elif abs(dy) > abs(dx) and abs(dy) > SWIPE_THRESHOLD:
-                        if dy < 0:
-                            pyautogui.press('up')
-                            cv2.putText(frame, "^^ JUMP", (ix-40, iy-60), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 255, 0), 3)
-                        else:
-                            pyautogui.press('down')
-                            cv2.putText(frame, "vv SLIDE", (ix-40, iy+60), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 0, 255), 3)
-                        action_triggered = True
-                    
-                    if action_triggered:
-                        last_action_time = current_time
-                        pos_buffer.clear() # Reset buffer after action to avoid double triggers
-    else:
-        pos_buffer.clear() # Clear if hand is lost
+        self.stream.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        self.stream.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        self.stream.set(cv2.CAP_PROP_FPS, 60)
+        self.stream.set(cv2.CAP_PROP_BUFFERSIZE, 1) # Force zero latency
+        (self.grabbed, self.frame) = self.stream.read()
+        self.stopped = False
 
-    # UI / Feedback
-    cv2.putText(frame, "Subway Surfers Controller PRO v2", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-    cv2.putText(frame, "Optimization: Multiframe Buffering Active", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+    def start(self):
+        if not self.stopped:
+            threading.Thread(target=self.update, args=(), daemon=True).start()
+        return self
+
+    def update(self):
+        while not self.stopped:
+            (self.grabbed, self.frame) = self.stream.read()
+
+    def read(self):
+        return self.grabbed, self.frame
+
+    def stop(self):
+        self.stopped = True
+        if hasattr(self, 'stream') and self.stream is not None:
+            self.stream.release()
+
+def main():
+    config = CONFIG
+    mode = config["control_mode"]
+
+    if mode not in DETECTORS:
+        print(f"Unknown mode '{mode}'. Available: {list(DETECTORS.keys())}")
+        sys.exit(1)
+
+    detector = DETECTORS[mode](config)
+    print(f"=== Subway Surfers CV Controller ===")
+    print(f"Mode: {detector.MODE_NAME} — {detector.MODE_DESC}")
+    print(f"Opening game in your browser...")
+
+    webbrowser.open(config["game_url"])
+
+    # Start threaded camera
+    cam_index = config["camera_index"]
+    print(f"Starting camera (index {cam_index})...")
+    cap = CameraStream(src=cam_index).start()
     
-    if current_time - last_action_time < COOLDOWN_TIME:
-        cv2.putText(frame, "COOLDOWN", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
-    else:
-        cv2.putText(frame, "READY", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+    if cap.stopped:
+        print(f"\n[!] Gagal ngebuka kamera index {cam_index} wok.")
+        print("[!] Coba cek lagi kameranya udah colok bener, atau dicoba ganti indexnya di .env jadi 0, 1, atau 2.")
+        sys.exit(1)
+        
+    time.sleep(1.0) # wait for camera to warm up
 
-    cv2.imshow('Subway Surfers Advanced Control', frame)
-    
-    key = cv2.waitKey(1) & 0xFF # Faster waitKey for better FPS
-    if key == ord('q'): break
-    elif key == ord(' '): pyautogui.press('space')
+    cooldown = config["cooldown_time"]
+    last_action_time = 0
+    last_action_name = ""
+    last_action_display = 0
 
-cap.release()
-cv2.destroyAllWindows()
+    win_name = "Subway Surfers Controller"
+    cv2.namedWindow(win_name, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(win_name, 480, 360)
+    cv2.setWindowProperty(win_name, cv2.WND_PROP_TOPMOST, 1)
+
+    print("Camera ready! Click on the game in your browser, then play.")
+    print("--------------------------------------------------")
+    print("SHORTCUTS (Press while camera window is active):")
+    print(" 'C' : Calibrate/Center the box on your body")
+    print(" '[' : Make the box SMALLER (more sensitive)")
+    print(" ']' : Make the box BIGGER (less sensitive)")
+    print(" 'Q' : Quit")
+    print("--------------------------------------------------")
+
+    while not cap.stopped:
+        ret, frame = cap.read()
+        if not ret:
+            time.sleep(0.01)
+            continue
+
+        frame = cv2.flip(frame, 1)
+        h, w = frame.shape[:2]
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+        now = time.time()
+        ready = now - last_action_time > cooldown
+
+        # --- Always draw hitbox ---
+        if hasattr(detector, '_draw_hitbox'):
+            detector._draw_hitbox(frame)
+
+        # --- Detect gesture ---
+        action = detector.process(frame, rgb) if ready else None
+
+        if action:
+            key_map = {"JUMP": "up", "SLIDE": "down", "LEFT": "left", "RIGHT": "right"}
+            pyautogui.press(key_map[action])
+            last_action_time = now
+            last_action_name = action
+            last_action_display = now
+
+        # --- UI Overlay ---
+        if now - last_action_display < 0.5 and last_action_name:
+            colors = {
+                "JUMP": (0, 255, 0), "SLIDE": (0, 0, 255),
+                "LEFT": (255, 255, 0), "RIGHT": (255, 0, 255),
+            }
+            c = colors.get(last_action_name, (255, 255, 255))
+            cv2.putText(frame, last_action_name, (w // 2 - 80, h // 2),
+                        cv2.FONT_HERSHEY_SIMPLEX, 2, c, 3)
+
+        bar_color = (0, 180, 0) if ready else (0, 0, 180)
+        cv2.rectangle(frame, (0, h - 40), (w, h), bar_color, -1)
+        status = f"READY | {detector.MODE_DESC}" if ready else f"COOLDOWN | Last: {last_action_name}"
+        cv2.putText(frame, status, (10, h - 12), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+
+        cv2.rectangle(frame, (0, 0), (w, 35), (30, 30, 30), -1)
+        cv2.putText(frame, f"Mode: {detector.MODE_NAME} | Press C to calibrate center", (10, 25),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (233, 69, 96), 2)
+
+        cv2.imshow(win_name, frame)
+
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord('q'):
+            break
+        elif key == ord(' '):
+            pyautogui.press('space')
+        elif key == ord('c') or key == ord('C'):
+            if hasattr(detector, 'get_last_position'):
+                pos = detector.get_last_position()
+                if pos:
+                    detector.calibrate(pos[0], pos[1])
+                    print(f"Calibrated center at {pos}")
+        elif key == ord('['):  # Smaller box
+            if hasattr(detector, 'adjust_box_size'):
+                detector.adjust_box_size(-0.02, -0.02)
+                print("Made box SMALLER")
+        elif key == ord(']'):  # Larger box
+            if hasattr(detector, 'adjust_box_size'):
+                detector.adjust_box_size(0.02, 0.02)
+                print("Made box BIGGER")
+
+    cap.stop()
+    cv2.destroyAllWindows()
+    detector.release()
+
+if __name__ == "__main__":
+    main()
