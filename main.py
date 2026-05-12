@@ -105,6 +105,7 @@ def main():
     print("--------------------------------------------------")
     print("SHORTCUTS (Press while camera window is active):")
     print(" 'C' : Calibrate/Center the box on your body")
+    print(" 'R' : Reset calibration to default")
     print(" '[' : Make the box SMALLER (more sensitive)")
     print(" ']' : Make the box BIGGER (less sensitive)")
     print(" 'Q' : Quit")
@@ -153,7 +154,7 @@ def main():
         cv2.putText(frame, status, (10, h - 12), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
 
         cv2.rectangle(frame, (0, 0), (w, 35), (30, 30, 30), -1)
-        cv2.putText(frame, f"Mode: {detector.MODE_NAME} | Press C to calibrate center", (10, 25),
+        cv2.putText(frame, f"Mode: {detector.MODE_NAME} | C:Calibrate R:Reset", (10, 25),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (233, 69, 96), 2)
 
         cv2.imshow(win_name, frame)
@@ -167,8 +168,15 @@ def main():
             if hasattr(detector, 'get_last_position'):
                 pos = detector.get_last_position()
                 if pos:
-                    detector.calibrate(pos[0], pos[1])
+                    if len(pos) > 2:
+                        detector.calibrate(pos[0], pos[1], pos[2])
+                    else:
+                        detector.calibrate(pos[0], pos[1])
                     print(f"Calibrated center at {pos}")
+        elif key == ord('r') or key == ord('R'):
+            if hasattr(detector, 'reset_calibration'):
+                detector.reset_calibration()
+                print("Calibration reset to default")
         elif key == ord('['):  # Smaller box
             if hasattr(detector, 'adjust_box_size'):
                 detector.adjust_box_size(-0.02, -0.02)

@@ -37,10 +37,16 @@ class BaseDetector:
         self.up_thresh = self.center_y - (self.box_height / 2)
         self.down_thresh = self.center_y + (self.box_height / 2)
 
-    def calibrate(self, x, y):
+    def calibrate(self, x, y, size=0):
         """Sets the new center point based on current tracking position."""
         self.center_x = x
         self.center_y = y
+        self.update_thresholds()
+
+    def reset_calibration(self):
+        """Resets the center point to default (0.5, 0.5)."""
+        self.center_x = 0.5
+        self.center_y = 0.5
         self.update_thresholds()
 
     def adjust_box_size(self, width_delta, height_delta):
@@ -177,6 +183,19 @@ class BodyDetector(BaseDetector):
         self.last_pos = None
         self.last_h_zone = "CENTER"
         self.last_v_zone = "CENTER"
+        
+        # Anti-Background Lock variables
+        self.player_size = 0.0
+        self.current_width = 0.0
+
+    def calibrate(self, x, y, size=0):
+        super().calibrate(x, y)
+        if size > 0:
+            self.player_size = size
+
+    def reset_calibration(self):
+        super().reset_calibration()
+        self.player_size = 0.0
 
     def process(self, frame, rgb):
         self._draw_hitbox(frame)
@@ -186,10 +205,21 @@ class BodyDetector(BaseDetector):
         if not results.pose_landmarks:
             return None
 
-        mp_draw.draw_landmarks(frame, results.pose_landmarks, mp_pose.POSE_CONNECTIONS)
-        
         lm = results.pose_landmarks.landmark
+        l_shoulder = lm[mp_pose.PoseLandmark.LEFT_SHOULDER]
+        r_shoulder = lm[mp_pose.PoseLandmark.RIGHT_SHOULDER]
         nose = lm[mp_pose.PoseLandmark.NOSE]
+        
+        # Calculate shoulder width to measure distance/size
+        self.current_width = abs(l_shoulder.x - r_shoulder.x)
+
+        # SMART LOCK: If calibrated, ignore people who are less than 50% of the player's size (background people)
+        if self.player_size > 0 and self.current_width < (self.player_size * 0.5):
+            cv2.putText(frame, "IGNORED BACKGROUND PERSON", (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+            # Return nothing, keeping the character in the last known action state implicitly
+            return None
+
+        mp_draw.draw_landmarks(frame, results.pose_landmarks, mp_pose.POSE_CONNECTIONS)
         
         mid_x = nose.x
         mid_y = nose.y
@@ -230,7 +260,10 @@ class BodyDetector(BaseDetector):
         return None
 
     def get_last_position(self):
-        return self.last_pos
+        # Return x, y, and size (for calibration)
+        if self.last_pos:
+            return (self.last_pos[0], self.last_pos[1], self.current_width)
+        return None
 
     def release(self):
         self.pose.close()
