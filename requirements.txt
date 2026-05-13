@@ -3,3 +3,4 @@ mediapipe==0.10.14
 pyautogui
 numpy
 python-dotenv
+keyboard

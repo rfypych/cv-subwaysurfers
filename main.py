@@ -6,6 +6,7 @@ import threading
 import webbrowser
 import numpy as np
 import pyautogui
+import keyboard
 from dotenv import load_dotenv
 from detectors import DETECTORS
 
@@ -95,6 +96,7 @@ def main():
     last_action_time = 0
     last_action_name = ""
     last_action_display = 0
+    last_hotkey_time = 0
 
     win_name = "Subway Surfers Controller"
     cv2.namedWindow(win_name, cv2.WINDOW_NORMAL)
@@ -106,8 +108,9 @@ def main():
     print("SHORTCUTS (Press while camera window is active):")
     print(" 'C' : Calibrate/Center the box on your body")
     print(" 'R' : Reset calibration to default")
-    print(" '[' : Make the box SMALLER (more sensitive)")
-    print(" ']' : Make the box BIGGER (less sensitive)")
+    print(" 'Enter' : Restart game (Auto-clicks center & presses space)")
+    print(" '[' / ']' : Make box WIDTH smaller / bigger (Kiri-Kanan)")
+    print(" '-' / '=' : Make box HEIGHT smaller / bigger (Jump-Slide)")
     print(" 'Q' : Quit")
     print("--------------------------------------------------")
 
@@ -159,12 +162,8 @@ def main():
 
         cv2.imshow(win_name, frame)
 
-        key = cv2.waitKey(1) & 0xFF
-        if key == ord('q'):
-            break
-        elif key == ord(' '):
-            pyautogui.press('space')
-        elif key == ord('c') or key == ord('C'):
+        # --- Global Hotkeys (Works even if Browser is focused) ---
+        if keyboard.is_pressed('c') and (now - last_hotkey_time > 0.5):
             if hasattr(detector, 'get_last_position'):
                 pos = detector.get_last_position()
                 if pos:
@@ -173,18 +172,53 @@ def main():
                     else:
                         detector.calibrate(pos[0], pos[1])
                     print(f"Calibrated center at {pos}")
-        elif key == ord('r') or key == ord('R'):
+            last_hotkey_time = now
+
+        elif keyboard.is_pressed('r') and (now - last_hotkey_time > 0.5):
             if hasattr(detector, 'reset_calibration'):
                 detector.reset_calibration()
                 print("Calibration reset to default")
-        elif key == ord('['):  # Smaller box
+            last_hotkey_time = now
+
+        elif keyboard.is_pressed('enter') and (now - last_hotkey_time > 1.0):
+            print("Restarting game (Global Hotkey)...")
+            sw, sh = pyautogui.size()
+            # Posisi tombol PLAY ijo (agak ke kanan bawah)
+            play_x = sw * 0.58
+            play_y = sh * 0.82
+            # Double click di situ
+            pyautogui.click(play_x, play_y, clicks=2, interval=0.1)
+            time.sleep(0.05)
+            pyautogui.press('space')
+            last_hotkey_time = now
+            
+        elif keyboard.is_pressed('[') and (now - last_hotkey_time > 0.15):
             if hasattr(detector, 'adjust_box_size'):
-                detector.adjust_box_size(-0.02, -0.02)
-                print("Made box SMALLER")
-        elif key == ord(']'):  # Larger box
+                detector.adjust_box_size(-0.02, 0)
+                print("Made box WIDTH SMALLER (Lebih sensitif Kiri/Kanan)")
+            last_hotkey_time = now
+            
+        elif keyboard.is_pressed(']') and (now - last_hotkey_time > 0.15):
             if hasattr(detector, 'adjust_box_size'):
-                detector.adjust_box_size(0.02, 0.02)
-                print("Made box BIGGER")
+                detector.adjust_box_size(0.02, 0)
+                print("Made box WIDTH BIGGER (Kurang sensitif Kiri/Kanan)")
+            last_hotkey_time = now
+
+        elif keyboard.is_pressed('-') and (now - last_hotkey_time > 0.15):
+            if hasattr(detector, 'adjust_box_size'):
+                detector.adjust_box_size(0, -0.02)
+                print("Made box HEIGHT SMALLER (Lebih sensitif Jump/Slide)")
+            last_hotkey_time = now
+            
+        elif keyboard.is_pressed('=') and (now - last_hotkey_time > 0.15):
+            if hasattr(detector, 'adjust_box_size'):
+                detector.adjust_box_size(0, 0.02)
+                print("Made box HEIGHT BIGGER (Kurang sensitif Jump/Slide)")
+            last_hotkey_time = now
+
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord('q'):
+            break
 
     cap.stop()
     cv2.destroyAllWindows()
