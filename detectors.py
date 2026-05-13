@@ -212,17 +212,31 @@ class BodyDetector(BaseDetector):
         
         # Calculate shoulder width to measure distance/size
         self.current_width = abs(l_shoulder.x - r_shoulder.x)
+        mid_x = nose.x
+        mid_y = nose.y
 
-        # SMART LOCK: If calibrated, ignore people who are less than 50% of the player's size (background people)
-        if self.player_size > 0 and self.current_width < (self.player_size * 0.5):
-            cv2.putText(frame, "IGNORED BACKGROUND PERSON", (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-            # Return nothing, keeping the character in the last known action state implicitly
+        # SMART LOCK: Strict Background Filtering
+        ignored = False
+        reason = ""
+        
+        # 1. Size Check: Ignore if they are less than 70% of the player's calibrated size
+        if self.player_size > 0 and self.current_width < (self.player_size * 0.7):
+            ignored = True
+            reason = "SIZE TOO SMALL"
+            
+        # 2. X-Distance Check: Ignore if they are standing way off to the side of the center
+        dist_from_center_x = abs(mid_x - self.center_x)
+        if dist_from_center_x > 0.35: # 35% of screen width away from center
+            ignored = True
+            reason = "TOO FAR FROM CENTER"
+
+        if ignored:
+            cv2.putText(frame, f"IGNORED BACKGROUND ({reason})", (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+            # Do NOT update self.last_pos, keep it as the real player's last known state
             return None
 
         mp_draw.draw_landmarks(frame, results.pose_landmarks, mp_pose.POSE_CONNECTIONS)
         
-        mid_x = nose.x
-        mid_y = nose.y
         self.last_pos = (mid_x, mid_y)
 
         px, py = int(mid_x * w), int(mid_y * h)

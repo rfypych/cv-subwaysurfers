@@ -118,6 +118,9 @@ def main():
             time.sleep(0.01)
             continue
 
+        # Flip kamera biar kayak cermin (lebih natural buat main)
+        frame = cv2.flip(frame, 1)
+
         # --- Process raw frame for speed ---
         now = time.time()
         ready = now - last_action_time > cooldown
