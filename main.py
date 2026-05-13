@@ -26,6 +26,7 @@ CONFIG = {
 
 # ZERO pause for maximum input speed
 pyautogui.PAUSE = 0
+pyautogui.FAILSAFE = False
 
 class CameraStream:
     def __init__(self, src=0):
@@ -41,8 +42,8 @@ class CameraStream:
             self.grabbed = False
             return
 
-        self.stream.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        self.stream.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        self.stream.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+        self.stream.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
         self.stream.set(cv2.CAP_PROP_FPS, 60)
         self.stream.set(cv2.CAP_PROP_BUFFERSIZE, 1) # Force zero latency
         (self.grabbed, self.frame) = self.stream.read()
@@ -100,7 +101,7 @@ def main():
 
     win_name = "Subway Surfers Controller"
     cv2.namedWindow(win_name, cv2.WINDOW_NORMAL)
-    cv2.resizeWindow(win_name, 480, 360)
+    cv2.resizeWindow(win_name, 854, 480)
     cv2.setWindowProperty(win_name, cv2.WND_PROP_TOPMOST, 1)
 
     print("Camera ready! Click on the game in your browser, then play.")
