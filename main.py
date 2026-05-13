@@ -30,11 +30,8 @@ pyautogui.FAILSAFE = False
 
 class CameraStream:
     def __init__(self, src=0):
-        # Use DirectShow on Windows for better external webcam compatibility
-        if os.name == 'nt':
-            self.stream = cv2.VideoCapture(src, cv2.CAP_DSHOW)
-        else:
-            self.stream = cv2.VideoCapture(src)
+        # Default backend for speed, skip DSHOW if it adds latency
+        self.stream = cv2.VideoCapture(src)
             
         if not self.stream.isOpened():
             print(f"ERROR: Could not open camera {src}. It might be used by another app or disconnected.")
@@ -42,8 +39,8 @@ class CameraStream:
             self.grabbed = False
             return
 
-        self.stream.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-        self.stream.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+        self.stream.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        self.stream.set(cv2.CAP_PROP_FRAME_HEIGHT, 360)
         self.stream.set(cv2.CAP_PROP_FPS, 60)
         self.stream.set(cv2.CAP_PROP_BUFFERSIZE, 1) # Force zero latency
         (self.grabbed, self.frame) = self.stream.read()
@@ -121,19 +118,16 @@ def main():
             time.sleep(0.01)
             continue
 
-        frame = cv2.flip(frame, 1)
-        h, w = frame.shape[:2]
-        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-
+        # --- Process raw frame for speed ---
         now = time.time()
         ready = now - last_action_time > cooldown
 
-        # --- Always draw hitbox ---
-        if hasattr(detector, '_draw_hitbox'):
-            detector._draw_hitbox(frame)
-
         # --- Detect gesture ---
-        action = detector.process(frame, rgb) if ready else None
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        
+        # Always call process for drawing even if not ready for input
+        action = detector.process(frame, rgb)
+        if not ready: action = None
 
         if action:
             key_map = {"JUMP": "up", "SLIDE": "down", "LEFT": "left", "RIGHT": "right"}
@@ -143,6 +137,7 @@ def main():
             last_action_display = now
 
         # --- UI Overlay ---
+        h, w = frame.shape[:2]
         if now - last_action_display < 0.5 and last_action_name:
             colors = {
                 "JUMP": (0, 255, 0), "SLIDE": (0, 0, 255),
