@@ -226,4 +226,11 @@ def main():
     detector.release()
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\n[!] Menutup Subway Surfers CV Controller...")
+        sys.exit(0)
+    except Exception as e:
+        print(f"\n[!] Error: {e}")
+        sys.exit(1)
